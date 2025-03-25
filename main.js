@@ -29,170 +29,216 @@ require([
     map.add(highlightedFacilitiesLayer); // Add layer for highlighted facilities
 
     // Store node coordinates and valid coordinate bounds
-    const nodeCoordinates = {};
+    let nodeCoordinates = {};
     let minLon = Infinity, maxLon = -Infinity;
     let minLat = Infinity, maxLat = -Infinity;
     
     // Load highlighted facilities
     let highlightedFacilities = [];
     
-    const loadHighlightedFacilities = esriRequest("data/highlighted_facilities_sample.csv", {
-        responseType: "text"
-    }).then(function(response) {
-        const data = response.data.trim();
-        highlightedFacilities = data.split(',').map(id => parseInt(id.trim()));
-        console.log("Highlighted facilities:", highlightedFacilities);
-        return highlightedFacilities;
-    }).catch(function(error) {
-        console.error("Error loading highlighted facilities:", error);
-        return [];
+    // Current dataset number
+    let currentDataset = "1";
+    
+    // Get dataset selector element
+    const datasetSelect = document.getElementById("datasetSelect");
+    
+    // Add event listener to dataset selector
+    datasetSelect.addEventListener("change", function(event) {
+        currentDataset = event.target.value;
+        reloadData();
     });
-
-    // Load destinations CSV file (nodes)
-    const loadNodes = esriRequest("data/destinations.csv", {
-        responseType: "text"
-    }).then(function(response) {
-        // Parse CSV text into array of objects
-        const csvData = parseCSV(response.data);
+    
+    // Function to load data based on current dataset selection
+    function reloadData() {
+        // Clear existing graphics layers
+        nodesLayer.removeAll();
+        linesLayer.removeAll();
+        highlightedFacilitiesLayer.removeAll();
         
-        // Create a marker for each node and store its coordinates
-        csvData.forEach(function(row, index) {
-            // Skip the header row or any row without coordinates
-            if (!row.SnapX || !row.SnapY || isNaN(parseFloat(row.SnapX)) || isNaN(parseFloat(row.SnapY))) {
-                console.log("Skipping row with invalid coordinates:", row);
-                return;
-            }
-            
-            const longitude = parseFloat(row.SnapX);
-            const latitude = parseFloat(row.SnapY);
-            
-            // Add basic coordinate validation to filter out obviously wrong values
-            // San Diego area is roughly longitude -118 to -116, latitude 32 to 34
-            if (longitude < -120 || longitude > -115 || latitude < 31 || latitude > 35) {
-                console.log(`Skipping point with out-of-bounds coordinates: (${longitude}, ${latitude})`);
-                return;
-            }
-            
-            // Update min/max coordinates to establish valid bounds
-            minLon = Math.min(minLon, longitude);
-            maxLon = Math.max(maxLon, longitude);
-            minLat = Math.min(minLat, latitude);
-            maxLat = Math.max(maxLat, latitude);
-            
-            const point = new Point({
-                longitude: longitude,
-                latitude: latitude
+        // Reset data structures
+        nodeCoordinates = {};
+        highlightedFacilities = [];
+        minLon = Infinity;
+        maxLon = -Infinity;
+        minLat = Infinity;
+        maxLat = -Infinity;
+        
+        // Load the data for the selected dataset
+        loadDataset(currentDataset);
+    }
+    
+    // Function to load a specific dataset
+    function loadDataset(datasetNumber) {
+        // Load highlighted facilities
+        loadHighlightedFacilities(datasetNumber)
+            .then(facilities => {
+                // Load nodes data
+                return loadNodes(facilities);
+            })
+            .then(result => {
+                // Load lines data
+                loadLines(datasetNumber, result.nodeCoordinates, result.bounds);
+            })
+            .catch(error => {
+                console.error("Error loading dataset:", error);
             });
-
-            // Store coordinates by index (starting from 1)
-            // The index in the file corresponds to both OriginID and DestinationID
-            const nodeId = index + 1;
-            nodeCoordinates[nodeId] = {
-                longitude: longitude,
-                latitude: latitude
-            };
-
-            // Check if this node is in the highlighted facilities list
-            const isHighlighted = highlightedFacilities.includes(nodeId);
-
-            // Create different symbols for regular and highlighted nodes
-            const markerSymbol = {
-                type: "simple-marker",
-                color: isHighlighted ? [0, 204, 255] : [0, 119, 200],  // Bright cyan blue for highlighted, regular blue for others
-                size: isHighlighted ? 8 : 6,
-                outline: {
-                    color: [255, 255, 255],
-                    width: isHighlighted ? 1 : 0.5
-                }
-            };
-
-            const nodeGraphic = new Graphic({
-                geometry: point,
-                symbol: markerSymbol,
-                attributes: {
-                    Name: row.Name,
-                    ID: nodeId,
-                    Highlighted: isHighlighted
-                },
-                popupTemplate: {
-                    title: "{Name}",
-                    content: [
-                        {
-                            type: "fields",
-                            fieldInfos: [
-                                { fieldName: "Name", label: "Name" },
-                                { fieldName: "ID", label: "ID" },
-                                { fieldName: "Highlighted", label: "Chosen Facility" }
-                            ]
-                        }
-                    ]
-                }
-            });
-
-            // Add to appropriate layer
-            nodesLayer.add(nodeGraphic);
+    }
+    
+    // Function to load highlighted facilities for the specified dataset
+    function loadHighlightedFacilities(datasetNumber) {
+        return esriRequest(`data/highlighted_facilities_sample_${datasetNumber}.csv`, {
+            responseType: "text"
+        }).then(function(response) {
+            const data = response.data.trim();
+            highlightedFacilities = data.split(',').map(id => parseInt(id.trim()));
+            console.log(`Highlighted facilities (Dataset ${datasetNumber}):`, highlightedFacilities);
+            return highlightedFacilities;
+        }).catch(function(error) {
+            console.error(`Error loading highlighted facilities (Dataset ${datasetNumber}):`, error);
+            return [];
         });
-        
-        // Expand bounds slightly to account for rounding errors
-        const boundBuffer = 0.1;
-        return {
-            nodeCoordinates,
-            bounds: {
-                minLon: minLon - boundBuffer,
-                maxLon: maxLon + boundBuffer,
-                minLat: minLat - boundBuffer,
-                maxLat: maxLat + boundBuffer
-            }
-        };
-    }).catch(function(error) {
-        console.error("Error loading destinations CSV:", error);
-        return { nodeCoordinates: {}, bounds: null };
-    });
+    }
 
-    // After both datasets are loaded, load and process the lines data
-    Promise.all([loadHighlightedFacilities, loadNodes]).then(function([facilities, result]) {
-        const { nodeCoordinates, bounds } = result;
-        
-        // Update the highlightedFacilities array if necessary
-        if (facilities && facilities.length > 0) {
-            highlightedFacilities = facilities;
-        }
-        
-        // Highlight nodes on map that match the highlighted facilities
-        Object.keys(nodeCoordinates).forEach(nodeId => {
-            const id = parseInt(nodeId);
-            if (highlightedFacilities.includes(id)) {
-                const coord = nodeCoordinates[id];
+    // Function to load nodes data
+    function loadNodes(facilities) {
+        return esriRequest("data/destinations.csv", {
+            responseType: "text"
+        }).then(function(response) {
+            // Parse CSV text into array of objects
+            const csvData = parseCSV(response.data);
+            
+            // Create a marker for each node and store its coordinates
+            csvData.forEach(function(row, index) {
+                // Skip the header row or any row without coordinates
+                if (!row.SnapX || !row.SnapY || isNaN(parseFloat(row.SnapX)) || isNaN(parseFloat(row.SnapY))) {
+                    console.log("Skipping row with invalid coordinates:", row);
+                    return;
+                }
+                
+                const longitude = parseFloat(row.SnapX);
+                const latitude = parseFloat(row.SnapY);
+                
+                // Add basic coordinate validation to filter out obviously wrong values
+                // San Diego area is roughly longitude -118 to -116, latitude 32 to 34
+                if (longitude < -120 || longitude > -115 || latitude < 31 || latitude > 35) {
+                    console.log(`Skipping point with out-of-bounds coordinates: (${longitude}, ${latitude})`);
+                    return;
+                }
+                
+                // Update min/max coordinates to establish valid bounds
+                minLon = Math.min(minLon, longitude);
+                maxLon = Math.max(maxLon, longitude);
+                minLat = Math.min(minLat, latitude);
+                maxLat = Math.max(maxLat, latitude);
                 
                 const point = new Point({
-                    longitude: coord.longitude,
-                    latitude: coord.latitude
+                    longitude: longitude,
+                    latitude: latitude
                 });
-                
-                // Create a highlight effect (larger circle behind the node)
-                const highlightSymbol = {
+
+                // Store coordinates by index (starting from 1)
+                // The index in the file corresponds to both OriginID and DestinationID
+                const nodeId = index + 1;
+                nodeCoordinates[nodeId] = {
+                    longitude: longitude,
+                    latitude: latitude
+                };
+
+                // Check if this node is in the highlighted facilities list
+                const isHighlighted = highlightedFacilities.includes(nodeId);
+
+                // Create different symbols for regular and highlighted nodes
+                const markerSymbol = {
                     type: "simple-marker",
-                    color: [0, 204, 255, 0.8],  // Bright cyan blue with some transparency
-                    size: 12,
+                    color: isHighlighted ? [0, 204, 255] : [0, 119, 200],  // Bright cyan blue for highlighted, regular blue for others
+                    size: isHighlighted ? 8 : 6,
                     outline: {
                         color: [255, 255, 255],
-                        width: 2
+                        width: isHighlighted ? 1 : 0.5
                     }
                 };
-                
-                const highlightGraphic = new Graphic({
+
+                const nodeGraphic = new Graphic({
                     geometry: point,
-                    symbol: highlightSymbol,
+                    symbol: markerSymbol,
                     attributes: {
-                        ID: id,
-                        Type: "Highlighted Facility"
+                        Name: row.Name,
+                        ID: nodeId,
+                        Highlighted: isHighlighted
+                    },
+                    popupTemplate: {
+                        title: "{Name}",
+                        content: [
+                            {
+                                type: "fields",
+                                fieldInfos: [
+                                    { fieldName: "Name", label: "Name" },
+                                    { fieldName: "ID", label: "ID" },
+                                    { fieldName: "Highlighted", label: "Chosen Facility" }
+                                ]
+                            }
+                        ]
                     }
                 });
-                
-                highlightedFacilitiesLayer.add(highlightGraphic);
-            }
+
+                // Add to appropriate layer
+                nodesLayer.add(nodeGraphic);
+            });
+            
+            // Expand bounds slightly to account for rounding errors
+            const boundBuffer = 0.1;
+            
+            // Highlight nodes on map that match the highlighted facilities
+            facilities.forEach(id => {
+                if (nodeCoordinates[id]) {
+                    const coord = nodeCoordinates[id];
+                    
+                    const point = new Point({
+                        longitude: coord.longitude,
+                        latitude: coord.latitude
+                    });
+                    
+                    // Create a highlight effect (larger circle behind the node)
+                    const highlightSymbol = {
+                        type: "simple-marker",
+                        color: [0, 204, 255, 0.8],  // Bright cyan blue with some transparency
+                        size: 12,
+                        outline: {
+                            color: [255, 255, 255],
+                            width: 2
+                        }
+                    };
+                    
+                    const highlightGraphic = new Graphic({
+                        geometry: point,
+                        symbol: highlightSymbol,
+                        attributes: {
+                            ID: id,
+                            Type: "Highlighted Facility"
+                        }
+                    });
+                    
+                    highlightedFacilitiesLayer.add(highlightGraphic);
+                }
+            });
+            
+            return {
+                nodeCoordinates,
+                bounds: {
+                    minLon: minLon - boundBuffer,
+                    maxLon: maxLon + boundBuffer,
+                    minLat: minLat - boundBuffer,
+                    maxLat: maxLat + boundBuffer
+                }
+            };
+        }).catch(function(error) {
+            console.error("Error loading destinations CSV:", error);
+            return { nodeCoordinates: {}, bounds: null };
         });
-        
+    }
+    
+    // Function to load lines data for the specified dataset
+    function loadLines(datasetNumber, nodeCoords, bounds) {
         // If we couldn't determine valid bounds, use San Diego area as fallback
         const validBounds = bounds || {
             minLon: -118.0, maxLon: -115.0,
@@ -202,7 +248,7 @@ require([
         console.log("Valid coordinate bounds:", validBounds);
         
         // Load the lines CSV file
-        esriRequest("data/lines_sample.csv", {
+        esriRequest(`data/lines_sample_${datasetNumber}.csv`, {
             responseType: "text"
         }).then(function(response) {
             // Parse CSV text into array of objects
@@ -224,15 +270,15 @@ require([
                     const shapeLength = parseFloat(row.Shape_Length);
                     
                     // Skip if we don't have coordinates for either point
-                    if (!nodeCoordinates[originId] || !nodeCoordinates[destId]) {
+                    if (!nodeCoords[originId] || !nodeCoords[destId]) {
                         skippedLines++;
                         console.log(`Skipped line: Origin=${originId}, Destination=${destId}, Reason=Missing node data`);
                         return;
                     }
                     
                     // Get coordinates for both points
-                    const originCoord = nodeCoordinates[originId];
-                    const destCoord = nodeCoordinates[destId];
+                    const originCoord = nodeCoords[originId];
+                    const destCoord = nodeCoords[destId];
                     
                     // Validate coordinates - ensure they're within reasonable bounds
                     if (!isCoordinateValid(originCoord, validBounds) || 
@@ -313,7 +359,7 @@ require([
                     
                     // After all data is loaded, adjust the map view to focus on highlighted facilities
                     if (highlightedFacilities.length > 0) {
-                        zoomToHighlightedFacilities(view, nodeCoordinates, highlightedFacilities);
+                        zoomToHighlightedFacilities(view, nodeCoords, highlightedFacilities);
                     }
                 }
             }
@@ -321,9 +367,9 @@ require([
             // Start processing lines in batches
             processBatch();
         }).catch(function(error) {
-            console.error("Error loading lines CSV:", error);
+            console.error(`Error loading lines CSV (Dataset ${datasetNumber}):`, error);
         });
-    });
+    }
 
     // Function to zoom the map to show all highlighted facilities
     function zoomToHighlightedFacilities(view, nodeCoordinates, highlightedIds) {
@@ -433,4 +479,7 @@ require([
 
         return result;
     }
+    
+    // Load initial dataset
+    loadDataset(currentDataset);
 });
