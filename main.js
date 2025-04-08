@@ -36,19 +36,32 @@ require([
     // Load highlighted facilities
     let highlightedFacilities = [];
     
-    // Current dataset number
-    let currentDataset = "1";
+    // Get input elements
+    const povertyInput = document.getElementById("povertyValue");
+    const incomeInput = document.getElementById("incomeValue");
+    const unemploymentInput = document.getElementById("unemploymentValue");
     
-    // Get dataset selector element
-    const datasetSelect = document.getElementById("datasetSelect");
+    // Function to increment a value
+    window.incrementValue = function(inputId) {
+        const input = document.getElementById(inputId);
+        const currentValue = parseInt(input.value);
+        if (currentValue < 2) {
+            input.value = currentValue + 1;
+            reloadData();
+        }
+    };
     
-    // Add event listener to dataset selector
-    datasetSelect.addEventListener("change", function(event) {
-        currentDataset = event.target.value;
-        reloadData();
-    });
+    // Function to decrement a value
+    window.decrementValue = function(inputId) {
+        const input = document.getElementById(inputId);
+        const currentValue = parseInt(input.value);
+        if (currentValue > 0) {
+            input.value = currentValue - 1;
+            reloadData();
+        }
+    };
     
-    // Function to load data based on current dataset selection
+    // Function to load data based on current input values
     function reloadData() {
         // Clear existing graphics layers
         nodesLayer.removeAll();
@@ -63,38 +76,43 @@ require([
         minLat = Infinity;
         maxLat = -Infinity;
         
-        // Load the data for the selected dataset
-        loadDataset(currentDataset);
+        // Get current input values
+        const povertyValue = povertyInput.value;
+        const incomeValue = incomeInput.value;
+        const unemploymentValue = unemploymentInput.value;
+        
+        // Load the data for the selected values
+        loadDataset(povertyValue, incomeValue, unemploymentValue);
     }
     
     // Function to load a specific dataset
-    function loadDataset(datasetNumber) {
+    function loadDataset(povertyValue, incomeValue, unemploymentValue) {
         // Load highlighted facilities
-        loadHighlightedFacilities(datasetNumber)
+        loadHighlightedFacilities(povertyValue, incomeValue, unemploymentValue)
             .then(facilities => {
                 // Load nodes data
                 return loadNodes(facilities);
             })
             .then(result => {
                 // Load lines data
-                loadLines(datasetNumber, result.nodeCoordinates, result.bounds);
+                loadLines(povertyValue, incomeValue, unemploymentValue, result.nodeCoordinates, result.bounds);
             })
             .catch(error => {
                 console.error("Error loading dataset:", error);
             });
     }
     
-    // Function to load highlighted facilities for the specified dataset
-    function loadHighlightedFacilities(datasetNumber) {
-        return esriRequest(`data/highlighted_facilities_sample_${datasetNumber}.csv`, {
+    // Function to load highlighted facilities for the specified values
+    function loadHighlightedFacilities(povertyValue, incomeValue, unemploymentValue) {
+        return esriRequest(`data/destinations_${povertyValue}_${incomeValue}_${unemploymentValue}.csv`, {
             responseType: "text"
         }).then(function(response) {
             const data = response.data.trim();
             highlightedFacilities = data.split(',').map(id => parseInt(id.trim()));
-            console.log(`Highlighted facilities (Dataset ${datasetNumber}):`, highlightedFacilities);
+            console.log(`Highlighted facilities (${povertyValue}_${incomeValue}_${unemploymentValue}):`, highlightedFacilities);
             return highlightedFacilities;
         }).catch(function(error) {
-            console.error(`Error loading highlighted facilities (Dataset ${datasetNumber}):`, error);
+            console.error(`Error loading highlighted facilities (${povertyValue}_${incomeValue}_${unemploymentValue}):`, error);
             return [];
         });
     }
@@ -237,8 +255,8 @@ require([
         });
     }
     
-    // Function to load lines data for the specified dataset
-    function loadLines(datasetNumber, nodeCoords, bounds) {
+    // Function to load lines data for the specified values
+    function loadLines(povertyValue, incomeValue, unemploymentValue, nodeCoords, bounds) {
         // If we couldn't determine valid bounds, use San Diego area as fallback
         const validBounds = bounds || {
             minLon: -118.0, maxLon: -115.0,
@@ -248,7 +266,7 @@ require([
         console.log("Valid coordinate bounds:", validBounds);
         
         // Load the lines CSV file
-        esriRequest(`data/lines_sample_${datasetNumber}.csv`, {
+        esriRequest(`data/lines_${povertyValue}_${incomeValue}_${unemploymentValue}.csv`, {
             responseType: "text"
         }).then(function(response) {
             // Parse CSV text into array of objects
@@ -367,7 +385,7 @@ require([
             // Start processing lines in batches
             processBatch();
         }).catch(function(error) {
-            console.error(`Error loading lines CSV (Dataset ${datasetNumber}):`, error);
+            console.error(`Error loading lines CSV (${povertyValue}_${incomeValue}_${unemploymentValue}):`, error);
         });
     }
 
@@ -481,5 +499,5 @@ require([
     }
     
     // Load initial dataset
-    loadDataset(currentDataset);
+    reloadData();
 });

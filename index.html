@@ -10,16 +10,42 @@
 </head>
 <body>
     <div id="mapContainer"></div>
-    <div id="datasetSelector">
-        <label for="datasetSelect">Select Dataset: </label>
-        <select id="datasetSelect">
-            <option value="1">Dataset 1</option>
-            <option value="2">Dataset 2</option>
-        </select>
+    <div id="variableControls">
+        <div class="slider-container">
+            <label for="povertyValue">Poverty Importance:</label>
+            <div class="input-group">
+                <button class="arrow-btn" onclick="decrementValue('povertyValue')">-</button>
+                <input type="number" id="povertyValue" min="0" max="2" value="0" readonly>
+                <button class="arrow-btn" onclick="incrementValue('povertyValue')">+</button>
+            </div>
+        </div>
+        <div class="slider-container">
+            <label for="incomeValue">Income Importance:</label>
+            <div class="input-group">
+                <button class="arrow-btn" onclick="decrementValue('incomeValue')">-</button>
+                <input type="number" id="incomeValue" min="0" max="2" value="0" readonly>
+                <button class="arrow-btn" onclick="incrementValue('incomeValue')">+</button>
+            </div>
+        </div>
+        <div class="slider-container">
+            <label for="unemploymentValue">Unemployment Rate Importance:</label>
+            <div class="input-group">
+                <button class="arrow-btn" onclick="decrementValue('unemploymentValue')">-</button>
+                <input type="number" id="unemploymentValue" min="0" max="2" value="0" readonly>
+                <button class="arrow-btn" onclick="incrementValue('unemploymentValue')">+</button>
+            </div>
+        </div>
+    </div>
+    <div id="infoBox">
+        <h3>Additional Factors Considered</h3>
+        <ul>
+            <li>Households Receiving Food Stamps</li>
+            <li>Youth Population Percentage</li>
+            <li>Gross Rent as Percentage of Income (35-100%)</li>
+        </ul>
     </div>
     <div id="mapLegend">
         <h3>Legend</h3>
-
         <div class="legend-item">
             <span class="legend-symbol legend-highlighted"></span>
             <span class="legend-text">Chosen Facility</span>
