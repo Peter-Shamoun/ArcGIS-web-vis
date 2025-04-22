@@ -11,6 +11,16 @@
 <body>
     <div id="mapContainer"></div>
     <div id="variableControls">
+        <div id="errorMessage" style="color: red; margin-bottom: 10px; display: none;"></div>
+        <div class="slider-container">
+            <label for="facilityCountValue">Number of Facilities:</label>
+            <div class="input-group facility-input-group">
+                <button class="facility-btn" onclick="setFacilityCount(5)">5</button>
+                <button class="facility-btn" onclick="setFacilityCount(10)">10</button>
+                <button class="facility-btn" onclick="setFacilityCount(20)">20</button>
+                <input type="hidden" id="facilityCountValue" value="20">
+            </div>
+        </div>
         <div class="slider-container">
             <label for="povertyValue">Poverty Importance:</label>
             <div class="input-group">

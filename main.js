@@ -37,9 +37,32 @@ require([
     let highlightedFacilities = [];
     
     // Get input elements
+    const facilityCountInput = document.getElementById("facilityCountValue");
     const povertyInput = document.getElementById("povertyValue");
     const incomeInput = document.getElementById("incomeValue");
     const unemploymentInput = document.getElementById("unemploymentValue");
+    
+    // Function to set facility count
+    window.setFacilityCount = function(count) {
+        facilityCountInput.value = count;
+        updateFacilityButtonStyles();
+        reloadData();
+    };
+    
+    // Function to update facility button styles to show which is active
+    function updateFacilityButtonStyles() {
+        const facilityCount = facilityCountInput.value;
+        const buttons = document.querySelectorAll('.facility-btn');
+        
+        buttons.forEach(button => {
+            const buttonValue = button.textContent;
+            if (buttonValue === facilityCount) {
+                button.classList.add('active');
+            } else {
+                button.classList.remove('active');
+            }
+        });
+    }
     
     // Function to increment a value
     window.incrementValue = function(inputId) {
@@ -77,43 +100,96 @@ require([
         maxLat = -Infinity;
         
         // Get current input values
+        const facilityCount = facilityCountInput.value;
         const povertyValue = povertyInput.value;
         const incomeValue = incomeInput.value;
         const unemploymentValue = unemploymentInput.value;
         
         // Load the data for the selected values
-        loadDataset(povertyValue, incomeValue, unemploymentValue);
+        loadDataset(facilityCount, povertyValue, incomeValue, unemploymentValue);
     }
     
     // Function to load a specific dataset
-    function loadDataset(povertyValue, incomeValue, unemploymentValue) {
-        // Load highlighted facilities
-        loadHighlightedFacilities(povertyValue, incomeValue, unemploymentValue)
+    function loadDataset(facilityCount, povertyValue, incomeValue, unemploymentValue) {
+        // Clear any previous error messages
+        const errorMessageDiv = document.getElementById("errorMessage");
+        if (errorMessageDiv) {
+            errorMessageDiv.textContent = '';
+            errorMessageDiv.style.display = 'none';
+        }
+
+        // Construct file paths based on facility count
+        let destinationsFileName, linesFileName;
+        if (facilityCount === "20") {
+            destinationsFileName = `data/destinations_${povertyValue}_${incomeValue}_${unemploymentValue}.csv`;
+            linesFileName = `data/lines_${povertyValue}_${incomeValue}_${unemploymentValue}.csv`;
+        } else { // For 5 or 10 facilities
+            destinationsFileName = `data/destinations_${facilityCount}_${povertyValue}_${incomeValue}_${unemploymentValue}.csv`;
+            linesFileName = `data/lines_${facilityCount}_${povertyValue}_${incomeValue}_${unemploymentValue}.csv`;
+        }
+
+        console.log("Attempting to load:", destinationsFileName, linesFileName);
+
+        // Load highlighted facilities first
+        loadHighlightedFacilities(destinationsFileName)
             .then(facilities => {
-                // Load nodes data
-                return loadNodes(facilities);
+                // If facilities loaded successfully, load nodes
+                if (facilities.length > 0) {
+                    return loadNodes(facilities);
+                } else {
+                    // If facilities file failed, stop processing this dataset
+                    throw new Error(`Facilities file ${destinationsFileName} could not be loaded or is empty.`);
+                }
             })
             .then(result => {
-                // Load lines data
-                loadLines(povertyValue, incomeValue, unemploymentValue, result.nodeCoordinates, result.bounds);
+                // If nodes loaded, load lines
+                loadLines(linesFileName, result.nodeCoordinates, result.bounds);
             })
             .catch(error => {
                 console.error("Error loading dataset:", error);
+                // Show error message
+                if (errorMessageDiv) {
+                    errorMessageDiv.textContent = "Failed to load data for the selected parameters. Please try a different combination.";
+                    errorMessageDiv.style.display = 'block';
+                }
+                // Clear layers again in case partial data was loaded before error
+                nodesLayer.removeAll();
+                linesLayer.removeAll();
+                highlightedFacilitiesLayer.removeAll();
             });
     }
     
-    // Function to load highlighted facilities for the specified values
-    function loadHighlightedFacilities(povertyValue, incomeValue, unemploymentValue) {
-        return esriRequest(`data/destinations_${povertyValue}_${incomeValue}_${unemploymentValue}.csv`, {
+    // Function to load highlighted facilities from the specified file
+    function loadHighlightedFacilities(fileName) {
+        console.log("Loading facilities file:", fileName);
+        return esriRequest(fileName, {
             responseType: "text"
         }).then(function(response) {
             const data = response.data.trim();
-            highlightedFacilities = data.split(',').map(id => parseInt(id.trim()));
-            console.log(`Highlighted facilities (${povertyValue}_${incomeValue}_${unemploymentValue}):`, highlightedFacilities);
+            if (!data) {
+                console.warn(`Facilities file ${fileName} is empty.`);
+                highlightedFacilities = [];
+                return highlightedFacilities;
+            }
+            highlightedFacilities = data.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+            console.log(`Highlighted facilities from ${fileName}:`, highlightedFacilities);
             return highlightedFacilities;
         }).catch(function(error) {
-            console.error(`Error loading highlighted facilities (${povertyValue}_${incomeValue}_${unemploymentValue}):`, error);
-            return [];
+            console.error(`Error loading highlighted facilities from ${fileName}:`, error.message || error);
+            highlightedFacilities = []; // Ensure it's empty on error
+             // Display error message to user
+             const errorMessageDiv = document.getElementById("errorMessage");
+             if(errorMessageDiv) {
+                 errorMessageDiv.textContent = `Error: Could not load data for the selected criteria (${fileName}). Please try different parameters.`;
+                 errorMessageDiv.style.display = 'block'; // Make it visible
+             } else {
+                 console.error("Error message container not found.");
+             }
+             // Clear the map
+             nodesLayer.removeAll();
+             linesLayer.removeAll();
+             highlightedFacilitiesLayer.removeAll();
+            return highlightedFacilities; // Return empty array to allow promise chain to potentially continue or be caught
         });
     }
 
@@ -131,6 +207,15 @@ require([
                 if (!row.SnapX || !row.SnapY || isNaN(parseFloat(row.SnapX)) || isNaN(parseFloat(row.SnapY))) {
                     console.log("Skipping row with invalid coordinates:", row);
                     return;
+                }
+                
+                // The index in the file corresponds to both OriginID and DestinationID
+                const nodeId = index + 1;
+
+                // Skip specific node IDs requested by the user
+                if ([668, 611, 612].includes(nodeId)) {
+                    console.log(`Skipping filtered node ID: ${nodeId}`);
+                    return; // Skip the rest of the processing for this node
                 }
                 
                 const longitude = parseFloat(row.SnapX);
@@ -155,15 +240,13 @@ require([
                 });
 
                 // Store coordinates by index (starting from 1)
-                // The index in the file corresponds to both OriginID and DestinationID
-                const nodeId = index + 1;
                 nodeCoordinates[nodeId] = {
                     longitude: longitude,
                     latitude: latitude
                 };
 
                 // Check if this node is in the highlighted facilities list
-                const isHighlighted = highlightedFacilities.includes(nodeId);
+                const isHighlighted = facilities.includes(nodeId);
 
                 // Create different symbols for regular and highlighted nodes
                 const markerSymbol = {
@@ -255,137 +338,132 @@ require([
         });
     }
     
-    // Function to load lines data for the specified values
-    function loadLines(povertyValue, incomeValue, unemploymentValue, nodeCoords, bounds) {
-        // If we couldn't determine valid bounds, use San Diego area as fallback
-        const validBounds = bounds || {
-            minLon: -118.0, maxLon: -115.0,
-            minLat: 32.0, maxLat: 34.0
-        };
-        
-        console.log("Valid coordinate bounds:", validBounds);
-        
-        // Load the lines CSV file
-        esriRequest(`data/lines_${povertyValue}_${incomeValue}_${unemploymentValue}.csv`, {
+    // Function to load lines data from the specified file
+    function loadLines(fileName, nodeCoords, bounds) {
+        console.log("Loading lines file:", fileName);
+        const batchSize = 2000; // Adjust batch size based on performance
+
+        esriRequest(fileName, {
             responseType: "text"
         }).then(function(response) {
-            // Parse CSV text into array of objects
-            const linesData = parseCSV(response.data);
-            
-            // Process lines in smaller batches to avoid browser hanging
-            const batchSize = 1000;
-            let processed = 0;
+            const csvData = parseCSV(response.data);
+            let graphicsBatch = [];
+            let processedCount = 0;
             let validLines = 0;
             let skippedLines = 0;
-            
+
+            console.log("CSV headers:", Object.keys(csvData[0] || {}));
+
             function processBatch() {
-                const batch = linesData.slice(processed, processed + batchSize);
-                processed += batchSize;
-                
-                batch.forEach(function(row) {
+                const batchEnd = Math.min(processedCount + batchSize, csvData.length);
+                for (let i = processedCount; i < batchEnd; i++) {
+                    const row = csvData[i];
+                    
+                    // Skip rows without valid data
+                    if (!row) continue;
+
+                    // Get the origin and destination IDs
                     const originId = parseInt(row.OriginID);
-                    const destId = parseInt(row.DestinationID);
-                    const shapeLength = parseFloat(row.Shape_Length);
+                    const destinationId = parseInt(row.DestinationID);
                     
-                    // Skip if we don't have coordinates for either point
-                    if (!nodeCoords[originId] || !nodeCoords[destId]) {
+                    // Skip if we don't have valid IDs
+                    if (isNaN(originId) || isNaN(destinationId)) {
                         skippedLines++;
-                        console.log(`Skipped line: Origin=${originId}, Destination=${destId}, Reason=Missing node data`);
-                        return;
+                        continue;
                     }
-                    
+
+                    // Get length from appropriate field - files can have different column names
+                    let length = 0;
+                    if (row.Shape_Length) {
+                        length = parseFloat(row.Shape_Length);
+                    } else if (row.Total_Length) {
+                        length = parseFloat(row.Total_Length);
+                    } else if (row.Total_Kilometers) {
+                        length = parseFloat(row.Total_Kilometers);
+                    }
+
+                    // Check if both origin and destination coordinates exist
+                    if (!nodeCoords[originId] || !nodeCoords[destinationId]) {
+                        skippedLines++;
+                        continue;
+                    }
+
                     // Get coordinates for both points
-                    const originCoord = nodeCoords[originId];
-                    const destCoord = nodeCoords[destId];
+                    const origin = nodeCoords[originId];
+                    const destination = nodeCoords[destinationId];
                     
-                    // Validate coordinates - ensure they're within reasonable bounds
-                    if (!isCoordinateValid(originCoord, validBounds) || 
-                        !isCoordinateValid(destCoord, validBounds)) {
+                    // Validate coordinates
+                    if (!isCoordinateValid(origin, bounds) || !isCoordinateValid(destination, bounds)) {
                         skippedLines++;
-                        console.log(`Skipped line: Origin=${originId}, Destination=${destId}, Reason=Out of bounds`);
-                        return;
+                        continue;
                     }
-                    
-                    // Use Total_Kilometers from the CSV instead of calculating the distance
-                    const distance = parseFloat(row.Total_Kilometers) || 0;
-                    
-                    // Skip lines that are too long (adjust this threshold as needed)
-                    const maxLineDistance = 100; // km
-                    if (distance > maxLineDistance) {
-                        skippedLines++;
-                        console.log(`Skipped line: Origin=${originId}, Destination=${destId}, Reason=Excessive distance`);
-                        return;
-                    }
-                    
+
                     // Create polyline connecting the two points
                     const polyline = new Polyline({
-                        paths: [
-                            [
-                                [originCoord.longitude, originCoord.latitude],
-                                [destCoord.longitude, destCoord.latitude]
-                            ]
-                        ]
+                        paths: [[[origin.longitude, origin.latitude], [destination.longitude, destination.latitude]]]
                     });
-                    
-                    // Determine line width based on Shape_Length
-                    const lineWidth = Math.max(0.5, Math.min(2.5, 3 - (shapeLength / 5000)));
+
+                    // Line color and thickness
+                    const lineWidth = Math.max(0.5, Math.min(2.5, 3 - (length / 5000)));
                     
                     const lineSymbol = {
                         type: "simple-line",
-                        color: [50, 50, 50, 1],  // Make more transparent for better visualization
-                        width: lineWidth,
-                        outline: {
-                            color: [1, 1, 1],
-                            width: 2
-                        }
+                        color: [50, 50, 50, 0.75],  // More transparent for better visualization
+                        width: lineWidth
                     };
-                    
-                    const lineGraphic = new Graphic({
+
+                    const polylineGraphic = new Graphic({
                         geometry: polyline,
                         symbol: lineSymbol,
                         attributes: {
                             OriginID: originId,
-                            DestinationID: destId,
-                            Length: shapeLength.toFixed(2),
-                            Distance: distance.toFixed(2) + " km"
-                        },
-                        popupTemplate: {
-                            title: "Connection",
-                            content: [
-                                {
-                                    type: "fields",
-                                    fieldInfos: [
-                                        { fieldName: "OriginID", label: "Origin ID" },
-                                        { fieldName: "DestinationID", label: "Destination ID" },
-                                        { fieldName: "Length", label: "Shape Length" },
-                                        { fieldName: "Distance", label: "Distance" }
-                                    ]
-                                }
-                            ]
+                            DestinationID: destinationId,
+                            Length: length.toFixed(2)
                         }
                     });
                     
-                    linesLayer.add(lineGraphic);
+                    graphicsBatch.push(polylineGraphic);
                     validLines++;
-                });
-                
-                // Process next batch if there are more lines
-                if (processed < linesData.length) {
-                    setTimeout(processBatch, 0);
+                }
+
+                // Add the batch to the layer
+                if (graphicsBatch.length > 0) {
+                    linesLayer.addMany(graphicsBatch);
+                    graphicsBatch = []; // Clear the batch
+                }
+
+                processedCount = batchEnd;
+
+                // If more data to process, continue in the next frame
+                if (processedCount < csvData.length) {
+                    requestAnimationFrame(processBatch);
                 } else {
-                    console.log(`Processed ${processed} lines: ${validLines} valid, ${skippedLines} skipped`);
+                    console.log(`Finished loading lines: ${validLines} valid, ${skippedLines} skipped`);
+                    // Zoom to highlighted facilities after lines are loaded
+                    zoomToHighlightedFacilities(view, nodeCoords, highlightedFacilities);
                     
-                    // After all data is loaded, adjust the map view to focus on highlighted facilities
-                    if (highlightedFacilities.length > 0) {
-                        zoomToHighlightedFacilities(view, nodeCoords, highlightedFacilities);
+                    // Clear any previous error messages if successful
+                    const errorMessageDiv = document.getElementById("errorMessage");
+                    if (errorMessageDiv) {
+                        errorMessageDiv.textContent = '';
+                        errorMessageDiv.style.display = 'none'; // Hide it
                     }
                 }
             }
-            
-            // Start processing lines in batches
-            processBatch();
+
+            // Start processing the first batch
+            requestAnimationFrame(processBatch);
+
         }).catch(function(error) {
-            console.error(`Error loading lines CSV (${povertyValue}_${incomeValue}_${unemploymentValue}):`, error);
+            console.error(`Error loading lines from ${fileName}:`, error.message || error);
+            // Display error message to user
+            const errorMessageDiv = document.getElementById("errorMessage");
+            if (errorMessageDiv) {
+                errorMessageDiv.textContent = `Error: Could not load data for the selected criteria (${fileName}). Please try different parameters.`;
+                errorMessageDiv.style.display = 'block'; // Make it visible
+            } else {
+                console.error("Error message container not found.");
+            }
         });
     }
 
@@ -497,6 +575,9 @@ require([
 
         return result;
     }
+    
+    // Set initial active state for facility count buttons
+    updateFacilityButtonStyles();
     
     // Load initial dataset
     reloadData();
